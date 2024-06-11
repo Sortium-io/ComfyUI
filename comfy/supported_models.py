@@ -5,6 +5,7 @@ from . import utils
 from . import sd1_clip
 from . import sd2_clip
 from . import sdxl_clip
+from . import sd3_clip
 
 from . import supported_models_base
 from . import latent_formats
@@ -53,7 +54,7 @@ class SD15(supported_models_base.BASE):
         replace_prefix = {"clip_l.": "cond_stage_model."}
         return utils.state_dict_prefix_replace(state_dict, replace_prefix)
 
-    def clip_target(self):
+    def clip_target(self, state_dict={}):
         return supported_models_base.ClipTarget(sd1_clip.SD1Tokenizer, sd1_clip.SD1ClipModel)
 
 class SD20(supported_models_base.BASE):
@@ -63,6 +64,12 @@ class SD20(supported_models_base.BASE):
         "use_linear_in_transformer": True,
         "adm_in_channels": None,
         "use_temporal_attention": False,
+    }
+
+    unet_extra_config = {
+        "num_heads": -1,
+        "num_head_channels": 64,
+        "attn_precision": torch.float32,
     }
 
     latent_format = latent_formats.SD15
@@ -90,7 +97,7 @@ class SD20(supported_models_base.BASE):
         state_dict = diffusers_convert.convert_text_enc_state_dict_v20(state_dict)
         return state_dict
 
-    def clip_target(self):
+    def clip_target(self, state_dict={}):
         return supported_models_base.ClipTarget(sd2_clip.SD2Tokenizer, sd2_clip.SD2ClipModel)
 
 class SD21UnclipL(SD20):
@@ -152,7 +159,7 @@ class SDXLRefiner(supported_models_base.BASE):
         state_dict_g = utils.state_dict_prefix_replace(state_dict_g, replace_prefix)
         return state_dict_g
 
-    def clip_target(self):
+    def clip_target(self, state_dict={}):
         return supported_models_base.ClipTarget(sdxl_clip.SDXLTokenizer, sdxl_clip.SDXLRefinerClipModel)
 
 class SDXL(supported_models_base.BASE):
@@ -174,6 +181,11 @@ class SDXL(supported_models_base.BASE):
             self.sampling_settings["sigma_max"] = 80.0
             self.sampling_settings["sigma_min"] = 0.002
             return model_base.ModelType.EDM
+        elif "edm_vpred.sigma_max" in state_dict:
+            self.sampling_settings["sigma_max"] = float(state_dict["edm_vpred.sigma_max"].item())
+            if "edm_vpred.sigma_min" in state_dict:
+                self.sampling_settings["sigma_min"] = float(state_dict["edm_vpred.sigma_min"].item())
+            return model_base.ModelType.V_PREDICTION_EDM
         elif "v_pred" in state_dict:
             return model_base.ModelType.V_PREDICTION
         else:
@@ -216,7 +228,7 @@ class SDXL(supported_models_base.BASE):
         state_dict_g = utils.state_dict_prefix_replace(state_dict_g, replace_prefix)
         return state_dict_g
 
-    def clip_target(self):
+    def clip_target(self, state_dict={}):
         return supported_models_base.ClipTarget(sdxl_clip.SDXLTokenizer, sdxl_clip.SDXLClipModel)
 
 class SSD1B(SDXL):
@@ -271,6 +283,12 @@ class SVD_img2vid(supported_models_base.BASE):
         "use_temporal_resblock": True
     }
 
+    unet_extra_config = {
+        "num_heads": -1,
+        "num_head_channels": 64,
+        "attn_precision": torch.float32,
+    }
+
     clip_vision_prefix = "conditioner.embedders.0.open_clip.model.visual."
 
     latent_format = latent_formats.SD15
@@ -281,7 +299,7 @@ class SVD_img2vid(supported_models_base.BASE):
         out = model_base.SVD_img2vid(self, device=device)
         return out
 
-    def clip_target(self):
+    def clip_target(self, state_dict={}):
         return None
 
 class SV3D_u(SVD_img2vid):
@@ -334,6 +352,11 @@ class Stable_Zero123(supported_models_base.BASE):
         "num_head_channels": -1,
     }
 
+    required_keys = {
+        "cc_projection.weight": None,
+        "cc_projection.bias": None,
+    }
+
     clip_vision_prefix = "cond_stage_model.model.visual."
 
     latent_format = latent_formats.SD15
@@ -342,7 +365,7 @@ class Stable_Zero123(supported_models_base.BASE):
         out = model_base.Stable_Zero123(self, device=device, cc_projection_weight=state_dict["cc_projection.weight"], cc_projection_bias=state_dict["cc_projection.bias"])
         return out
 
-    def clip_target(self):
+    def clip_target(self, state_dict={}):
         return None
 
 class SD_X4Upscaler(SD20):
@@ -416,7 +439,7 @@ class Stable_Cascade_C(supported_models_base.BASE):
         out = model_base.StableCascade_C(self, device=device)
         return out
 
-    def clip_target(self):
+    def clip_target(self, state_dict={}):
         return supported_models_base.ClipTarget(sdxl_clip.StableCascadeTokenizer, sdxl_clip.StableCascadeClipModel)
 
 class Stable_Cascade_B(Stable_Cascade_C):
@@ -439,6 +462,70 @@ class Stable_Cascade_B(Stable_Cascade_C):
         out = model_base.StableCascade_B(self, device=device)
         return out
 
+class SD15_instructpix2pix(SD15):
+    unet_config = {
+        "context_dim": 768,
+        "model_channels": 320,
+        "use_linear_in_transformer": False,
+        "adm_in_channels": None,
+        "use_temporal_attention": False,
+        "in_channels": 8,
+    }
 
-models = [Stable_Zero123, SD15, SD20, SD21UnclipL, SD21UnclipH, SDXLRefiner, SDXL, SSD1B, KOALA_700M, KOALA_1B, Segmind_Vega, SD_X4Upscaler, Stable_Cascade_C, Stable_Cascade_B, SV3D_u, SV3D_p]
+    def get_model(self, state_dict, prefix="", device=None):
+        return model_base.SD15_instructpix2pix(self, device=device)
+
+class SDXL_instructpix2pix(SDXL):
+    unet_config = {
+        "model_channels": 320,
+        "use_linear_in_transformer": True,
+        "transformer_depth": [0, 0, 2, 2, 10, 10],
+        "context_dim": 2048,
+        "adm_in_channels": 2816,
+        "use_temporal_attention": False,
+        "in_channels": 8,
+    }
+
+    def get_model(self, state_dict, prefix="", device=None):
+        return model_base.SDXL_instructpix2pix(self, model_type=self.model_type(state_dict, prefix), device=device)
+
+class SD3(supported_models_base.BASE):
+    unet_config = {
+        "in_channels": 16,
+        "pos_embed_scaling_factor": None,
+    }
+
+    sampling_settings = {
+        "shift": 3.0,
+    }
+
+    unet_extra_config = {}
+    latent_format = latent_formats.SD3
+    text_encoder_key_prefix = ["text_encoders."]
+
+    def get_model(self, state_dict, prefix="", device=None):
+        out = model_base.SD3(self, device=device)
+        return out
+
+    def clip_target(self, state_dict={}):
+        clip_l = False
+        clip_g = False
+        t5 = False
+        pref = self.text_encoder_key_prefix[0]
+        if "{}clip_l.transformer.text_model.final_layer_norm.weight".format(pref) in state_dict:
+            clip_l = True
+        if "{}clip_g.transformer.text_model.final_layer_norm.weight".format(pref) in state_dict:
+            clip_g = True
+        if "{}t5xxl.transformer.encoder.final_layer_norm.weight".format(pref) in state_dict:
+            t5 = True
+
+        class SD3ClipModel(sd3_clip.SD3ClipModel):
+            def __init__(self, device="cpu", dtype=None):
+                super().__init__(clip_l=clip_l, clip_g=clip_g, t5=t5, device=device, dtype=dtype)
+
+        return supported_models_base.ClipTarget(sd3_clip.SD3Tokenizer, SD3ClipModel)
+
+
+models = [Stable_Zero123, SD15_instructpix2pix, SD15, SD20, SD21UnclipL, SD21UnclipH, SDXL_instructpix2pix, SDXLRefiner, SDXL, SSD1B, KOALA_700M, KOALA_1B, Segmind_Vega, SD_X4Upscaler, Stable_Cascade_C, Stable_Cascade_B, SV3D_u, SV3D_p, SD3]
+
 models += [SVD_img2vid]
