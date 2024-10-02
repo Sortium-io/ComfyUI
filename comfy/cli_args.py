@@ -1,5 +1,7 @@
 import argparse
 import enum
+import os
+from typing import Optional
 import comfy.options
 import sys
 import logging
@@ -35,7 +37,7 @@ class EnumAction(argparse.Action):
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument("--listen", type=str, default="127.0.0.1", metavar="IP", nargs="?", const="0.0.0.0", help="Specify the IP address to listen on (default: 127.0.0.1). If --listen is provided without an argument, it defaults to 0.0.0.0. (listens on all)")
+parser.add_argument("--listen", type=str, default="127.0.0.1", metavar="IP", nargs="?", const="0.0.0.0,::", help="Specify the IP address to listen on (default: 127.0.0.1). You can give a list of ip addresses by separating them with a comma like: 127.2.2.2,127.3.3.3 If --listen is provided without an argument, it defaults to 0.0.0.0,:: (listens on all ipv4 and ipv6)")
 parser.add_argument("--port", type=int, default=8188, help="Set the listen port.")
 parser.add_argument("--tls-keyfile", type=str, help="Path to TLS (SSL) key file. Enables TLS, makes app accessible at https://... requires --tls-certfile to function")
 parser.add_argument("--tls-certfile", type=str, help="Path to TLS (SSL) certificate file. Enables TLS, makes app accessible at https://... requires --tls-keyfile to function")
@@ -77,6 +79,7 @@ fpte_group.add_argument("--fp8_e5m2-text-enc", action="store_true", help="Store 
 fpte_group.add_argument("--fp16-text-enc", action="store_true", help="Store text encoder weights in fp16.")
 fpte_group.add_argument("--fp32-text-enc", action="store_true", help="Store text encoder weights in fp32.")
 
+parser.add_argument("--force-channels-last", action="store_true", help="Force channels last format when inferencing the models.")
 
 parser.add_argument("--directml", type=int, nargs="?", metavar="DIRECTML_DEVICE", const=-1, help="Use torch-directml.")
 
@@ -89,6 +92,12 @@ class LatentPreviewMethod(enum.Enum):
     TAESD = "taesd"
 
 parser.add_argument("--preview-method", type=LatentPreviewMethod, default=LatentPreviewMethod.NoPreviews, help="Default preview method for sampler nodes.", action=EnumAction)
+
+parser.add_argument("--preview-size", type=int, default=512, help="Sets the maximum preview size for sampler nodes.")
+
+cache_group = parser.add_mutually_exclusive_group()
+cache_group.add_argument("--cache-classic", action="store_true", help="Use the old style (aggressive) caching.")
+cache_group.add_argument("--cache-lru", type=int, default=0, help="Use LRU caching with a maximum of N node results cached. May use more RAM/VRAM.")
 
 attn_group = parser.add_mutually_exclusive_group()
 attn_group.add_argument("--use-split-cross-attention", action="store_true", help="Use the split cross attention optimization. Ignored when xformers is used.")
@@ -110,20 +119,60 @@ vram_group.add_argument("--lowvram", action="store_true", help="Split the unet i
 vram_group.add_argument("--novram", action="store_true", help="When lowvram isn't enough.")
 vram_group.add_argument("--cpu", action="store_true", help="To use the CPU for everything (slow).")
 
+parser.add_argument("--reserve-vram", type=float, default=None, help="Set the amount of vram in GB you want to reserve for use by your OS/other software. By default some amount is reverved depending on your OS.")
+
+
+parser.add_argument("--default-hashing-function", type=str, choices=['md5', 'sha1', 'sha256', 'sha512'], default='sha256', help="Allows you to choose the hash function to use for duplicate filename / contents comparison. Default is sha256.")
 
 parser.add_argument("--disable-smart-memory", action="store_true", help="Force ComfyUI to agressively offload to regular ram instead of keeping models in vram when it can.")
 parser.add_argument("--deterministic", action="store_true", help="Make pytorch use slower deterministic algorithms when it can. Note that this might not make images deterministic in all cases.")
+parser.add_argument("--fast", action="store_true", help="Enable some untested and potentially quality deteriorating optimizations.")
 
 parser.add_argument("--dont-print-server", action="store_true", help="Don't print server output.")
 parser.add_argument("--quick-test-for-ci", action="store_true", help="Quick test for CI.")
 parser.add_argument("--windows-standalone-build", action="store_true", help="Windows standalone build: Enable convenient things that most people using the standalone windows build will probably enjoy (like auto opening the page on startup).")
 
 parser.add_argument("--disable-metadata", action="store_true", help="Disable saving prompt metadata in files.")
+parser.add_argument("--disable-all-custom-nodes", action="store_true", help="Disable loading all custom nodes.")
 
 parser.add_argument("--multi-user", action="store_true", help="Enables per-user storage.")
 
 parser.add_argument("--verbose", action="store_true", help="Enables more debug prints.")
 
+# The default built-in provider hosted under web/
+DEFAULT_VERSION_STRING = "comfyanonymous/ComfyUI@latest"
+
+parser.add_argument(
+    "--front-end-version",
+    type=str,
+    default=DEFAULT_VERSION_STRING,
+    help="""
+    Specifies the version of the frontend to be used. This command needs internet connectivity to query and
+    download available frontend implementations from GitHub releases.
+
+    The version string should be in the format of:
+    [repoOwner]/[repoName]@[version]
+    where version is one of: "latest" or a valid version number (e.g. "1.0.0")
+    """,
+)
+
+def is_valid_directory(path: Optional[str]) -> Optional[str]:
+    """Validate if the given path is a directory."""
+    if path is None:
+        return None
+
+    if not os.path.isdir(path):
+        raise argparse.ArgumentTypeError(f"{path} is not a valid directory.")
+    return path
+
+parser.add_argument(
+    "--front-end-root",
+    type=is_valid_directory,
+    default=None,
+    help="The local filesystem path to the directory where the frontend is located. Overrides --front-end-version.",
+)
+
+parser.add_argument("--user-directory", type=is_valid_directory, default=None, help="Set the ComfyUI user directory with an absolute path.")
 
 if comfy.options.args_parsing:
     args = parser.parse_args()
